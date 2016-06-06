@@ -1,0 +1,69 @@
+-- INFO:
+-- This script reminds each Ostheer player to setup idle Opel Maultier trucks with a mini map icon
+-- This ability has to be initiliased in each gamemode:
+-- import("opel_maultier_reminder.scar")
+-- opelmaultier_checker_init()
+
+-- You can find the minimap icon ability here:
+-- BP_GetAbilityBlueprint("abilities/ostheer_maultier_minimapicon.lua")
+
+-- Values to adjust:
+-- How often should the check be performed? (Make sure to syncronise with the minimap icon ability above reminder_interval/2 is a good value!)
+-- Default: 6
+local reminder_interval = 6
+
+local axis_players = {}
+local minimapicon_ability = ""
+
+-- This will initialise the ability and has to be fired on map start once only!
+function opelmaultier_checker_init()
+   -- Easy check to see if there are ostheer players
+   -- If this table is empty no ostheer players are present which means this script will not run!
+   TEAM_AXIS = Team_FindByRace(TRACE_AXIS_OSTHEER)
+   
+   minimapicon_ability = BP_GetAbilityBlueprint("abilities/ostheer_maultier_minimapicon.lua")
+   
+   -- Did we find the Axis Team?
+   if (TEAM_AXIS ~= nil) then
+      -- Yes, now get all its players
+      axis_players = Team_GetPlayers(TEAM_AXIS)
+      
+      -- Now we get rid of all other axis players except ostheer ones
+      for k,v in pairs(axis_players) do
+         -- The race index of the Ostheer is 7
+         if (Player_GetRace(v) ~= 7) then
+            -- Player is not using Ostheer, drop from table
+            k = nil
+         end
+      end
+      -- Start the rule to check for Opel Maultiers for the remaining players
+      Rule_AddInterval(check_ostheer_players, reminder_interval)
+   end
+end
+
+-- The actual rule that checks for new opel maultiers
+function check_ostheer_players()
+   for k,v in pairs(axis_players) do
+      -- Get all squads of that player
+      sg_player = Player_GetSquads(v)
+      
+      local func = function(sgroupid, itemindex, squadID)
+         -- Check if the squad is moving
+         if (Squad_IsMoving(squadID) == false) then
+            -- Check for maultiers
+            if (Squad_GetBlueprint(squadID) == SBP.OSTHEER.OPEL_MAULTIER) then
+               -- We found a maultier!
+               -- Check if it is setup
+               if (Squad_HasUpgrade(squadID, UPG.OSTHEER.MAULTIER_LOCKDOWN) == false) then
+                  -- Maultier is not setup
+                  Cmd_Ability(axis_players[1], minimapicon_ability, Squad_GetPosition(squadID), false, true, false)
+                  -- HintPoint_AddToSquadBadge(squadID, LOC("Setup your Opel Maultier!"), true )
+                  -- EventCue_Create( CUE.NORMAL, LOC("Opel Maultier not setup!"), LOC(""), Squad_GetPosition(squadID), nil, nil, eventcue_lifetime, true )
+               end
+            end
+         end
+      end
+      -- Execute for each squad inside sg_player
+      SGroup_ForEach(sg_player, func)
+   end
+end
