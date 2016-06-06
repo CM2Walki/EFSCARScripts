@@ -1,0 +1,248 @@
+-----------------------------------------------------------------------
+-- Kesselschlacht Ability Script
+--
+-- (c) ARCH Ltd. - Archaic Entertainment Ltd. 2016
+--
+-- Programmers: Walentin 'Walki' L.
+-----------------------------------------------------------------------
+-- To-Do: 
+-----------------------------------------------------------------------
+
+import("ScarUtil.scar")
+import("EFUtil.scar")
+
+-- INFO:
+-- This ability can only be fired by the axis team
+-- This ability has to be initiliased in each gamemode:
+-- import("kesselschlacht_ability.scar")
+-- kesselschlacht_init()
+-- For ability_duration it will detect cut off allied sectors and initiliase a barrage depending on the total amount of sectors cut off
+-- The more sectors are cut off the smaller the barrages per sector will be
+
+-- The Sectorbarrages can be found here:
+-- ARTILLERY_150MM = BP_GetAbilityBlueprint("abilities/ostheer_elite_off_map_howitzer_shoot.rgd") -> 1 Shell
+-- ARTILLERY_150MM_2 = BP_GetAbilityBlueprint("abilities/ostheer_elite_off_map_howitzer_shoot_small.rgd") -> 2 Shells
+-- ARTILLERY_150MM_3 = BP_GetAbilityBlueprint("abilities/ostheer_elite_off_map_howitzer_shoot_scatter.rgd") -> 3 Shells
+
+-- Values to adjust: 
+-- Possibilty of hitting infantry/vehicles/structures (determines if it gets hit at all per second)
+-- Default: 20, 50
+local possibility_of_hitting_squad = 20.0
+local possibility_of_hitting_structure = 50.0
+
+-- Ability duration in seconds, NOTE: Should always match ability time in Corsix's!!!
+-- Default: 40
+local ability_duration = 40
+
+-- If true: The more sectors are cut off, the more the artillery will be scattered across the sectors
+-- If false: All cutoff sectors get 100% artillery covering (might affect performance)
+-- Default: true
+local relative_artillery_distribution = true
+
+-- Use this to configure from which cutoff sector counts how many shells should hit the sectors
+-- Usually it should be an increasing order -> More cutoff sectors = less fire concentration (makes sense, eh?)
+-- If relative_artillery_distribution = false, these values will have no effect!
+-- Default: 2, 4, 6
+local amount_of_sectors_for_3_shells = 3
+local amount_of_sectors_for_2_shells = 4
+local amount_of_sectors_for_1_shells = 5
+
+-- Amount of shells in total to spend on sectors
+-- Default: 60
+local amount_of_shells_in_total = 60
+
+-- Artillery lock time (sector bombardment interval in seconds)
+-- Default: 10
+local artillery_lock_time = 10
+
+-----------------------------------------------------------------------
+-- Part below is for Authorised Personnel only!
+-----------------------------------------------------------------------
+-- Fire till shells are depleted (shell_counter == amount_of_shells_in_total)
+local shell_counter = 0
+
+local g_totalplayers = 0
+
+-- Player tables
+local allied_players = {}
+local axis_players = {}
+
+-- To prevent a sector getting turned into a moon region
+local artillery_lock = false
+local artillery_fired = false
+
+-- This will initialise the ability and has to be fired on map start once only!
+function kesselschlacht_init()
+
+	g_totalplayers = World_GetPlayerCount()
+	
+	-- Create EGroups
+	eg_stratpoints = EGroup_CreateIfNotFound("eg_stratpoints")
+	eg_allied_stratpoints = EGroup_CreateIfNotFound("eg_allied_stratpoints")
+	eg_currently_cutoff = EGroup_CreateIfNotFound("eg_currently_cutoff")
+	
+	eg_structures_targets = EGroup_CreateIfNotFound("eg_structures_targets")
+	
+	-- Create SGroups
+	sg_allsquads_target = SGroup_CreateIfNotFound("sg_allsquads_target")
+
+	-- Add all of the strat points to the eg_stratpoints group
+	for i=0, World_GetNumEntities()-1 do
+		local entity = World_GetEntity(i)
+		if Entity_IsStrategicPoint(entity) then
+			-- Add stratpoints
+			EGroup_Add(eg_stratpoints, entity)
+		end
+	end
+	
+	-- Get the allied team and its' players
+	TEAM_ALLIES = Team_FindByRace(TRACE_ALLIES, TRACE_ALLIES_COMMONWEALTH, TRACE_ALLIES_SOVIETS)
+	allied_players = Team_GetPlayers(TEAM_ALLIES)
+	
+	-- Get the axis team and its' players
+	TEAM_AXIS = Team_FindByRace(TRACE_AXIS, TRACE_AXIS_PANZER_ELITE, TRACE_AXIS_OSTHEER)
+	axis_players = Team_GetPlayers(TEAM_AXIS)
+end
+
+-- Will be triggered by rgd file
+function trigger_kesselschlacht()
+	if (Rule_Exists(fire_kesselschlacht) == false) then
+		Rule_AddInterval(fire_kesselschlacht, 1)
+		Rule_AddOneShot(kill_kesselschlacht, ability_duration)
+	else
+		-- Ability is already in progress
+		-- Add this players shells to the execution
+		shell_counter = shell_counter - 60
+	end
+end
+
+function kill_kesselschlacht()
+	artillery_lock = false
+	artillery_fired = false
+	shell_counter = 0
+	Rule_Remove(remove_artillery_lock)
+	Rule_Remove(fire_kesselschlacht)
+end
+
+-- The actual rule
+function fire_kesselschlacht()
+	-- Responsible for getting potentional sectors
+	local getalliedsectors = function(egroupid, itemindex, entityID)
+		if (Entity_IsVictoryPoint(entityID) == false) then -- Filter VPs as they are always "cut off"
+			if (Entity_IsStrategicPointCapturedBy(entityID, allied_players[1])) then -- This function returns true if it's owned by the team of the player
+				EGroup_Add(eg_allied_stratpoints, entityID) -- Add to EGroup
+			else
+				EGroup_Remove(eg_allied_stratpoints, entityID) -- Important, territories can change hands all the time
+			end
+		end
+	end
+	
+	-- Execute above function for every startpoint we got earlier
+	EGroup_ForEach(eg_stratpoints, getalliedsectors)
+	
+	-- Obviously we only need this if we actually care about sectorcount
+	if (relative_artillery_distribution == true) then
+		cutoff_sector_count = EGroup_Count(eg_currently_cutoff)
+	end
+	
+	-- Narrow down our selection to cut off sectors
+	-- Also get targets inside sector
+	local getcutoffsectors = function(egroupid, itemindex, entityID)
+		local sectorpos = Entity_GetPosition(entityID) -- Get sectorposition
+		if (World_IsInSupply(allied_players[1], sectorpos) == false) then -- Check if the position is in supply for allied player 1
+			-- Add to EGroup
+			EGroup_Add(eg_currently_cutoff, entityID)
+			
+			-- Find potentional squad/structure targets in sector
+			local sectorid = World_GetTerritorySectorID(sectorpos)
+			World_GetSquadsWithinTerritorySector(axis_players[1], sg_allsquads_target, sectorid, OT_Enemy)
+			World_GetEntitiesWithinTerritorySector(axis_players[1], eg_structures_targets, sectorid, OT_Enemy)
+			
+			-- Makes sure we are not out of shells
+			if (shell_counter < amount_of_shells_in_total) then
+				-- Makes sure that we don't turn the sector flag into a moon region
+				if (artillery_lock == false) then
+					-- Display blue kickers above every sector
+					UI_CreateColouredEntityKickerMessage(axis_players[1], entityID, LOC("Sector cut off! Artillery Firing!"), 0, 0, 255, 0 ) -- this function appears to ignore the playerID...
+					
+					-- Fire random rounds around flag (modify artillery ability for amount of rounds and scatter)
+					if (relative_artillery_distribution == true) then
+						-- Relative artillery covering per sector (ignore sector count)
+						-- Determine how many shells will be fired at each sector
+						if (cutoff_sector_count <= amount_of_sectors_for_3_shells) then
+							Cmd_Ability(axis_players[1], ABILITY.COMMANDER_TREE.OSTHEER.ARTILLERY_150MM_3, sectorpos, false, true, false)
+							shell_counter = shell_counter + 3
+						elseif ((cutoff_sector_count > amount_of_sectors_for_3_shells) and (cutoff_sector_count <= amount_of_sectors_for_2_shells)) then
+							Cmd_Ability(axis_players[1], ABILITY.COMMANDER_TREE.OSTHEER.ARTILLERY_150MM_2, sectorpos, false, true, false)
+							shell_counter = shell_counter + 2
+						elseif (cutoff_sector_count > amount_of_sectors_for_2_shells) then
+							shell_counter = shell_counter + 1
+							Cmd_Ability(axis_players[1], ABILITY.COMMANDER_TREE.OSTHEER.ARTILLERY_150MM, sectorpos, false, true, false)
+						end
+					else
+						-- Equal artillery covering per sector (ignore sector count)
+						Cmd_Ability(axis_players[1], ABILITY.COMMANDER_TREE.OSTHEER.ARTILLERY_150MM_3, sectorpos, false, true, false)				
+					end
+					artillery_fired = true
+				end
+			end
+		else
+			EGroup_Remove(eg_currently_cutoff, entityID) -- Important, territories can get in supply again
+		end
+	end
+	
+	-- Execute function above for every allied strategic point
+	EGroup_ForEach(eg_allied_stratpoints, getcutoffsectors)
+	
+	-- This manages the volley interval on the sector flags
+	if ((Rule_Exists(remove_artillery_lock) == false) and (artillery_fired == true)) then
+		Rule_AddOneShot(remove_artillery_lock, artillery_lock_time)
+		artillery_lock = true
+		artillery_fired = false
+	end
+	
+	-- Check if we still have shells
+	if (shell_counter < amount_of_shells_in_total) then
+	-- Engange structure targets
+		local engage_structures = function(egroupid, itemindex, entityID)
+			local random = World_GetRand(1, 100)
+			
+			-- Will this structure be happy or bombed to death?
+			if (random <= possibility_of_hitting_structure) then
+				-- Unlucky :<
+				shell_counter = shell_counter + 1
+				local entitypos = Entity_GetPosition(entityID)
+				Cmd_Ability(axis_players[1], ABILITY.COMMANDER_TREE.OSTHEER.ARTILLERY_150MM, entitypos, false, true, false)
+			end
+		end
+		
+		-- Execute for every structure inside of sector
+		EGroup_ForEach(eg_structures_targets, engage_structures)
+	
+		-- Engange structure targets
+		local engage_squads = function(sgroupid, itemindex, squadID)
+			local random = World_GetRand(1, 100)
+			
+			-- Will this structure be happy or bombed to death?
+			if (random <= possibility_of_hitting_squad) then
+				-- Unlucky :<
+				shell_counter = shell_counter + 1
+				local squadpos = Squad_GetPosition(squadID)
+				Cmd_Ability(axis_players[1], ABILITY.COMMANDER_TREE.OSTHEER.ARTILLERY_150MM, squadpos, false, true, false)
+			end
+		end
+		
+		-- Execute for every squad inside of sector
+		SGroup_ForEach(sg_allsquads_target, engage_squads)
+	end
+	
+	-- Ya know, squads can leave the sector
+	-- Also the sector can be reconnected ;P
+	SGroup_Clear(sg_allsquads_target)
+	EGroup_Clear(eg_structures_targets)
+end
+
+-- Sick function
+function remove_artillery_lock()
+	artillery_lock = false
+end
