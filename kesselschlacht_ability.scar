@@ -24,15 +24,18 @@ import("EFUtil.scar")
 -- ARTILLERY_150MM_2 = BP_GetAbilityBlueprint("abilities/ostheer_elite_off_map_howitzer_shoot_small.rgd") -> 2 Shells
 -- ARTILLERY_150MM_3 = BP_GetAbilityBlueprint("abilities/ostheer_elite_off_map_howitzer_shoot_scatter.rgd") -> 3 Shells
 
+-- The Minimap Ability Icon is actually a seperate Corsix's ABILITY
+-- BP_GetAbilityBlueprint("attrib/abilities/ostheer_kesselschlacht_minimapicon.rgd")
+
 -- Values to adjust: 
 -- Possibilty of hitting infantry/vehicles/structures (determines if it gets hit at all per second)
 -- Default: 20, 50
 local possibility_of_hitting_squad = 20.0
 local possibility_of_hitting_structure = 50.0
 
--- Ability duration in seconds, NOTE: Should always match ability time in Corsix's!!!
+-- Ability duration in seconds, NOTE: Should always match ability time in Corsix's!!! (ALSO the minimapicon ability!!!)
 -- Default: 40
-local ability_duration = 40
+local ability_duration = 65
 
 -- If true: The more sectors are cut off, the more the artillery will be scattered across the sectors
 -- If false: All cutoff sectors get 100% artillery covering (might affect performance)
@@ -71,10 +74,16 @@ local axis_players = {}
 local artillery_lock = false
 local artillery_fired = false
 
+local minimapicon_ability = ""
+
+local middle = 0
+
 -- This will initialise the ability and has to be fired on map start once only!
 function kesselschlacht_init()
 
 	g_totalplayers = World_GetPlayerCount()
+	middle = Util_ScarPos(0,0)
+	minimapicon_ability = BP_GetAbilityBlueprint("abilities/ostheer_kesselschlacht_minimapicon.rgd")
 	
 	-- Create EGroups
 	eg_stratpoints = EGroup_CreateIfNotFound("eg_stratpoints")
@@ -109,6 +118,7 @@ function trigger_kesselschlacht()
 	if (Rule_Exists(fire_kesselschlacht) == false) then
 		Rule_AddInterval(fire_kesselschlacht, 1)
 		Rule_AddOneShot(kill_kesselschlacht, ability_duration)
+		Cmd_Ability(axis_players[1], minimapicon_ability, middle, false, true, false)
 	else
 		-- Ability is already in progress
 		-- Add this players shells to the execution
@@ -163,8 +173,8 @@ function fire_kesselschlacht()
 				-- Makes sure that we don't turn the sector flag into a moon region
 				if (artillery_lock == false) then
 					-- Display blue kickers above every sector
-					UI_CreateColouredEntityKickerMessage(axis_players[1], entityID, LOC("Sector cut off! Artillery Firing!"), 0, 0, 255, 0 ) -- this function appears to ignore the playerID...
-					
+					UI_CreateColouredEntityKickerMessage(axis_players[1], entityID, 19010696, 0, 0, 255, 0 ) -- this function appears to ignore the playerID...
+					local blipid = UI_CreateMinimapBlipOnEntity(entityID, 5, BT_AttackHerePing)
 					-- Fire random rounds around flag (modify artillery ability for amount of rounds and scatter)
 					if (relative_artillery_distribution == true) then
 						-- Relative artillery covering per sector (ignore sector count)
