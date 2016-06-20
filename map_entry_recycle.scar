@@ -26,6 +26,7 @@ local g_totalplayers = 0
 function map_entry_recylce_init()
 	g_totalplayers = World_GetPlayerCount()
 	mapentrypoint_entity = BP_GetEntityBlueprint("ebps/gameplay/mesh_mapentrypoint.rgd")
+	mapentrypoint_entity_soviets = BP_GetEntityBlueprint("ebps/gameplay/mesh_mapentrypoint_soviets.rgd")
 	
 	eg_sovietentrypoints = EGroup_CreateIfNotFound("eg_sovietentrypoints")
 
@@ -33,18 +34,28 @@ function map_entry_recylce_init()
 	eg_overlappoints = EGroup_CreateIfNotFound("eg_overlappoints")
 	
 	local placeentrypoints = function(egroupid, itemindex, entityID)
-		-- Find out if the spawn position is owned by a Soviet player
-		if (Player_GetRace(Entity_GetPlayerOwner(entityID)) == 6) then
-			EGroup_Add(eg_sovietentrypoints, entityID)
-		end
+		-- Find all map entries that overlap (in a 5 meter radius)
+		World_GetEntitiesNearPoint(axis_players[1], eg_overlappoints, Entity_GetPosition(entityID), 5, OT_Neutral)
+		
+		-- Filter out innocent entities before the purge! This basically makes sure we always delete duplicates close to the same position
+		EGroup_Filter(eg_overlappoints, mapentrypoint_entity_soviets, FILTER_KEEP)
+		EGroup_DestroyAllEntities(eg_overlappoints)
 		
 		-- Find all map entries that overlap (in a 5 meter radius)
 		World_GetEntitiesNearPoint(axis_players[1], eg_overlappoints, Entity_GetPosition(entityID), 5, OT_Neutral)
-		-- Filter out innocent entities before the purge! This basically makes sure we always delete dublicates
+		-- Filter out innocent entities before the purge! This basically makes sure we always delete duplicates close to the same position
 		EGroup_Filter(eg_overlappoints, mapentrypoint_entity, FILTER_KEEP)
 		EGroup_DestroyAllEntities(eg_overlappoints)
-		-- Spawn the physical representation
-		Entity_CreateENV(mapentrypoint_entity, Entity_GetPosition(entityID), Entity_GetPosition(entityID))
+		
+		-- Find out if the spawn position is owned by a Soviet player
+		if (Player_GetRace(Entity_GetPlayerOwner(entityID)) == 6) then
+			EGroup_Add(eg_sovietentrypoints, entityID)
+			Entity_CreateENV(mapentrypoint_entity_soviets, Entity_GetPosition(entityID), Entity_GetPosition(entityID))	
+		else
+			-- Spawn the physical representation
+			Entity_CreateENV(mapentrypoint_entity, Entity_GetPosition(entityID), Entity_GetPosition(entityID))		
+		end
+
 	end
 	
 	-- Iritate over all map entry points
