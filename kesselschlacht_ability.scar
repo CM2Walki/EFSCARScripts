@@ -62,13 +62,16 @@ local artillery_lock_time = 10
 -- Part below is for Authorised Personnel only!
 -----------------------------------------------------------------------
 -- Fire till shells are depleted (shell_counter == amount_of_shells_in_total)
+
+-- Make the players and the map_entry_points globally available (for the map entry point script)
+eg_map_entry_points = {}
+-- Player tables
+axis_players = {}
+allied_players = {}
+
 local shell_counter = 0
 
 local g_totalplayers = 0
-
--- Player tables
-local allied_players = {}
-local axis_players = {}
 
 -- To prevent a sector getting turned into a moon region
 local artillery_lock = false
@@ -95,12 +98,17 @@ function kesselschlacht_init()
 	-- Create SGroups
 	sg_allsquads_target = SGroup_CreateIfNotFound("sg_allsquads_target")
 
+	map_entry_point = BP_GetEntityBlueprint("ebps/gameplay/map_entry_point.rgd")
+	eg_map_entry_points = EGroup_CreateIfNotFound("eg_map_entry_points")
+
 	-- Add all of the strat points to the eg_stratpoints group
 	for i=0, World_GetNumEntities()-1 do
 		local entity = World_GetEntity(i)
 		if Entity_IsStrategicPoint(entity) then
 			-- Add stratpoints
 			EGroup_Add(eg_stratpoints, entity)
+		elseif (Entity_GetBlueprint(entity) == map_entry_point) then
+			EGroup_Add(eg_map_entry_points, entity)
 		end
 	end
 	
@@ -174,7 +182,7 @@ function fire_kesselschlacht()
 				if (artillery_lock == false) then
 					-- Display blue kickers above every sector
 					UI_CreateColouredEntityKickerMessage(axis_players[1], entityID, 19010696, 0, 0, 255, 0 ) -- this function appears to ignore the playerID...
-					local blipid = UI_CreateMinimapBlipOnEntity(entityID, 5, BT_AttackHerePing)
+					local blipid = UI_CreateMinimapBlipOnEntity(entityID, 5, BT_AttackHerePing) -- Create an attack here marker at the point
 					-- Fire random rounds around flag (modify artillery ability for amount of rounds and scatter)
 					if (relative_artillery_distribution == true) then
 						-- Relative artillery covering per sector (ignore sector count)
